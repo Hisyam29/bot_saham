@@ -1,5 +1,3 @@
 requests
 pandas
 yfinance
-time
-os
