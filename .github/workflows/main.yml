@@ -25,7 +25,6 @@ jobs:
 
       - name: Jalankan bot
         run: python botgit.py
-
         env:
           TOKEN: ${{ secrets.TOKEN }}
           RUN_BOT: ${{ secrets.RUN_BOT }}
