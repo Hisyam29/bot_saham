@@ -1,6 +1,7 @@
 name: Run Bot
 
 on:
+  push:
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
