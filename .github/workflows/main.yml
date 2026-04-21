@@ -29,7 +29,3 @@ jobs:
         env:
           TOKEN: ${{ secrets.TOKEN }}
           RUN_BOT: ${{ secrets.RUN_BOT }}
-
-
-- name: Print time
-  run: date
