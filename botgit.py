@@ -19,6 +19,7 @@ if RUN_BOT != "ON":
 # CONFIG
 # =========================
 TOKEN = os.getenv("TOKEN")
+print("DEBUG TOKEN:", TOKEN)
 
 CHAT_IDS = [
     "1280847575",
