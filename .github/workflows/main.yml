@@ -22,7 +22,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Jalankan bot
-        run: python tes.py
+        run: python botgit.py
 
         env:
           TOKEN: ${{ secrets.TOKEN }}
