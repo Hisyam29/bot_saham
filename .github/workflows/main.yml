@@ -1,0 +1,25 @@
+name: Run Bot
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"  # jalan tiap 30 menit
+  workflow_dispatch:
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Ambil file
+        uses: actions/checkout@v3
+
+      - name: Install Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Install library
+        run: pip install -r requirements.txt
+
+      - name: Jalankan bot
+        run: python bot.py
