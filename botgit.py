@@ -7,7 +7,7 @@ import os
 # =========================
 # SWITCH ON/OFF
 # =========================
-RUN_BOT = os.getenv("RUN_BOT")
+RUN_BOT = os.getenv("RUN_BOT", "ON") # Default ke ON jika env belum diset saat testing
 
 print("RUN_BOT:", RUN_BOT)
 
@@ -25,24 +25,25 @@ CHAT_IDS = [
     "1280847575",
 ]
 
-INTERVAL = "4h"
-PERIOD = "30d"
+INTERVAL = "1d"
+PERIOD = "60d"
 
 ATR_PERIOD = 2
 MULTIPLIER = 1
 
-MIN_VALUE = 5_000_000_000  # 5M
+MIN_VALUE = 5_000_000_000  # 5M (Minimum Transaksi Saham)
 
 # =========================
-# TELEGRAM
+# TELEGRAM WITH MARKDOWN
 # =========================
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    
+
     for chat_id in CHAT_IDS:
         data = {
             "chat_id": chat_id,
-            "text": message
+            "text": message,
+            "parse_mode": "Markdown" # Diaktifkan agar teks bot lebih rapi (tebal/miring)
         }
         try:
             res = requests.post(url, data=data)
@@ -80,7 +81,7 @@ def get_data(symbol):
     return df
 
 # =========================
-# SUPER TREND 2,1
+# SUPER TREND 2,1 (RULE 1: AKUM/UPTREND)
 # =========================
 def compute_supertrend(df):
     df = df.copy()
@@ -110,67 +111,45 @@ def compute_supertrend(df):
     return df
 
 # =========================
-# SCORING SYSTEM (0–100)
+# EVALUASI LOGIKA 3 RULES (MURNI HARD FILTER)
 # =========================
-def calculate_score(df):
-    score = 0
-
-    close = df['Close'].iloc[-1]
-    open_ = df['Open'].iloc[-1]
-    high = df['High'].iloc[-1]
-    low = df['Low'].iloc[-1]
-
+def check_trend_following_rules(df):
+    # Ambil data candle terakhir (hari ini/sesi ini) dan sebelumnya
+    close_now = df['Close'].iloc[-1]
     volume_now = df['Volume'].iloc[-1]
+    
+    # Hitung nilai transaksi candle terakhir
+    value = close_now * volume_now
+
+    # --- RULE 1: UPTREND / AKUMULASI ---
+    # Memastikan indikator SuperTrend berada di zona Bullish (True)
+    rule_uptrend = df['in_uptrend'].iloc[-1] == True
+
+    # --- RULE 2: MOMENTUM (MACD) ---
+    # Hitung MACD Line & Signal Line secara manual
+    ema12 = df['Close'].ewm(span=12, adjust=False).mean()
+    ema26 = df['Close'].ewm(span=26, adjust=False).mean()
+    macd_line = ema12 - ema26
+    signal_line = macd_line.ewm(span=9, adjust=False).mean()
+
+    # Momentum valid jika MACD Line berada di atas Signal Line (Golden Cross/Bullish Zone)
+    rule_momentum = macd_line.iloc[-1] > signal_line.iloc[-1]
+
+    # --- RULE 3: VOLUME MELEDAK ---
+    # Hitung rata-rata volume 20 candle terakhir
     volume_avg = df['Volume'].rolling(20).mean().iloc[-1]
+    
+    # Kriteria volume meledak: Volume saat ini harus minimal 1.5x lipat dari rata-rata volume 20 hari
+    rule_volume = volume_now >= (1.5 * volume_avg)
+    
+    # Hitung rasio ledakan volume untuk ditampilkan di notifikasi nanti
+    vol_ratio = round(volume_now / volume_avg, 2) if volume_avg != 0 else 0
 
-    value = close * volume_now
-
-    current = df['in_uptrend'].iloc[-1]
-    previous = df['in_uptrend'].iloc[-2]
-
-    high_5 = df['High'].rolling(5).max().iloc[-2]
-    high_10 = df['High'].rolling(10).max().iloc[-2]
-
-    # 1. SUPER TREND
-    if current and not previous:
-        score += 25
-    elif current:
-        score += 15
-
-    # 2. VOLUME
-    ratio = volume_now / volume_avg
-    if ratio > 2:
-        score += 20
-    elif ratio > 1.5:
-        score += 15
-    elif ratio > 1.2:
-        score += 10
-
-    # 3. VALUE
-    if value > 20_000_000_000:
-        score += 20
-    elif value > 10_000_000_000:
-        score += 15
-    elif value > MIN_VALUE:
-        score += 10
-
-    # 4. BREAKOUT
-    if close > high_10:
-        score += 20
-    elif close > high_5:
-        score += 10
-
-    # 5. CANDLE STRENGTH
-    body = abs(close - open_)
-    range_ = high - low if (high - low) != 0 else 1
-    strength = body / range_
-
-    if strength > 0.7:
-        score += 15
-    elif strength > 0.5:
-        score += 10
-
-    return score, value
+    # KESIMPULAN KAKU: Harus Lolos Ketiganya!
+    if rule_uptrend and rule_momentum and rule_volume:
+        return True, value, vol_ratio
+    
+    return False, value, vol_ratio
 
 # =========================
 # MAIN BOT (RUN SEKALI)
@@ -178,7 +157,7 @@ def calculate_score(df):
 def run_bot():
     symbols = load_symbols()
 
-    send_telegram("🚀 BOT AKTIF - HYBRID + SCORING 100")
+    send_telegram("🚀 *BOT TREND FOLLOWING AKTIF*\n_Memulai pemindaian pasar berbasis 3 Rules..._")
 
     print("Scanning market...")
 
@@ -188,39 +167,43 @@ def run_bot():
         try:
             df = get_data(symbol)
 
-            if len(df) < 20:
+            # Validasi minimal data agar indikator MA20 & MACD bisa dihitung
+            if len(df) < 26:
                 continue
 
+            # Jalankan SuperTrend
             df = compute_supertrend(df)
 
-            score, value = calculate_score(df)
+            # Jalankan Cek 3 Rules & Ambil Data Transaksi
+            is_valid, value, vol_ratio = check_trend_following_rules(df)
             price = df['Close'].iloc[-1]
 
+            # Filter tambahan: likuiditas nilai transaksi harian/sesi
             if value < MIN_VALUE:
                 continue
 
-            if score >= 40:
-                results.append((symbol, score, price, value))
-
-            print(symbol, "| Score:", score)
+            # Jika lolos ketiga aturan, masukkan ke list hasil
+            if is_valid:
+                clean_symbol = symbol.replace(".JK", "") # Bersihkan teks .JK agar rapi di Telegram
+                results.append((clean_symbol, price, vol_ratio))
+                print(f"✅ {clean_symbol} LOLOS FILTER!")
 
         except Exception as e:
             print("Error:", symbol, e)
 
-    # SORTING
-    results = sorted(results, key=lambda x: x[1], reverse=True)
-
     # TELEGRAM OUTPUT
     if results:
-        message = "🔥 RANKING SAHAM TERBAIK\n\n"
+        message = "🔥 *SAHAM LOLOS FILTER TREND FOLLOWING*\n"
+        message += "⚡ _Kriteria: SuperTrend Uptrend + MACD Bullish + Volume > 1.5x MA20_\n\n"
 
-        for r in results[:10]:
-            message += f"{r[0]} | Score: {r[1]} | Price: {int(r[2])}\n"
+        for r in results:
+            message += f"📌 *{r[0]}*\n"
+            message += f"├─ Harga: Rp {int(r[1])}\n"
+            message += f"└─ Lonjakan Volume: *{r[2]}x* lipat rata-rata\n\n"
 
         send_telegram(message)
-
     else:
-        send_telegram("❌ Tidak ada saham sesuai kriteria")
+        send_telegram("❌ *Hasil Pemindaian:* Tidak ada saham yang memenuhi ketiga kriteria saat ini.")
 
     print("DONE\n")
 
